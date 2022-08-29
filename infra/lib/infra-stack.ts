@@ -2,6 +2,7 @@ import * as cdk from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as rds from 'aws-cdk-lib/aws-rds';
+import * as cr from 'aws-cdk-lib/custom-resources';
 // import * as sqs from 'aws-cdk-lib/aws-sqs';
 
 export class InfraStack extends cdk.Stack {
@@ -96,12 +97,45 @@ export class InfraStack extends cdk.Stack {
       // storageEncryptionKey: // TODO Check
     })
 
-    const severlessV2ScallingConfiguration = {
+    const serverlessV2ScalingConfiguration = {
       MinCapacity: 0.5,
       MaxCapacity: 1,
     }
 
     // TODO Write
+    const dbScalingConfigure = new cr.AwsCustomResource(this, 'DbScalingConfigure', {
+      onCreate: {
+        service: "RDS",
+        action: "modifyDBCluster",
+        parameters: {
+          DBClusterIdentifier: dbCluster.clusterIdentifier,
+          severlessV2ScallingConfiguration: serverlessV2ScalingConfiguration,
+        },
+        physicalResourceId: cr.PhysicalResourceId.of(dbCluster.clusterIdentifier)
+      },
+      onUpdate: {
+        service: "RDS",
+        action: "modifyDBCluster",
+        parameters: {
+          DBClusterIdentifier: dbCluster.clusterIdentifier,
+          serverlessV2ScalingConfiguration: serverlessV2ScalingConfiguration,
+        },
+        physicalResourceId: cr.PhysicalResourceId.of(dbCluster.clusterIdentifier)
+      },
+      policy: cr.AwsCustomResourcePolicy.fromSdkCalls({
+        resources: cr.AwsCustomResourcePolicy.ANY_RESOURCE,
+      }),
+    })
 
+    const cfnDbCluster = dbCluster.node.defaultChild as rds.CfnDBCluster
+    const dbScalingConfigureTarget = dbScalingConfigure.node.findChild("Resource").node.defaultChild as cdk.CfnResource
+
+    cfnDbCluster.addPropertyOverride("EngineMode", "provisiond")
+    dbScalingConfigure.node.addDependency(cfnDbCluster)
+
+    for (let i = 1 ; i <= dbClusterInstanceCount ; i++) {
+      (dbCluster.node.findChild(`Instance${i}`) as rds.CfnDBInstance).addDependsOn(dbScalingConfigureTarget)
+    }
+    
   }
 }
